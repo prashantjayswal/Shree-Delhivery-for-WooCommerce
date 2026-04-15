@@ -27,7 +27,7 @@
 ## 📥 Installation
 
 ```bash
-git clone https://github.com/your-repo/shree-delhivery.git
+git clone https://github.com/prashantjayswal/Shree-Delhivery-for-WooCommerce.git
 ```
 
 Upload to:
