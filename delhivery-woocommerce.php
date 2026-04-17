@@ -3,7 +3,7 @@
  * Plugin Name: Shree Delhivery for WooCommerce
  * Plugin URI: https://one.delhivery.com/developer-portal/documents
  * Description: Shree WooCommerce integration for Delhivery shipping rates, serviceability, shipment creation, tracking, labels, pickup requests, and status sync.
- * Version: 0.1.1
+ * Version: 0.3.0
  * Author: Prashant Jayswal
  * Author URI: https://github.com/prashantjayswal
  * Requires Plugins: woocommerce
@@ -19,7 +19,7 @@ if (! defined('ABSPATH')) {
 }
 
 if (! defined('DELHIVERY_WC_VERSION')) {
-    define('DELHIVERY_WC_VERSION', '0.1.1');
+    define('DELHIVERY_WC_VERSION', '0.3.0');
 }
 
 if (! defined('DELHIVERY_WC_FILE')) {
@@ -38,6 +38,12 @@ require_once DELHIVERY_WC_PATH . 'includes/class-delhivery-wc-plugin.php';
 
 register_activation_hook(DELHIVERY_WC_FILE, array('Delhivery_WC_Plugin', 'activate'));
 register_deactivation_hook(DELHIVERY_WC_FILE, array('Delhivery_WC_Plugin', 'deactivate'));
+
+add_action('before_woocommerce_init', static function () {
+    if (class_exists('\Automattic\WooCommerce\Utilities\FeaturesUtil')) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', DELHIVERY_WC_FILE, true);
+    }
+});
 
 add_action('plugins_loaded', static function () {
     Delhivery_WC_Plugin::instance();

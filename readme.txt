@@ -4,7 +4,7 @@ Tags: woocommerce, shipping, delhivery, logistics, ecommerce
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.1
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,8 +18,18 @@ This plugin adds:
 * Checkout postcode serviceability validation
 * Live TAT and approximate shipping-rate lookup
 * Admin order actions for shipment creation, tracking sync, label generation, pickup, and cancellation
-* REST webhook endpoint for Delhivery status updates
-* PHP cURL requests for all Delhivery API calls
+* NDR management: re-attempt delivery or return-to-origin directly from order admin
+* Shipment update: modify shipment details after creation
+* Reverse pickup: create return pickups for refunded orders (manual or automatic)
+* Download POD (Proof of Delivery) documents for delivered orders
+* Estimated delivery date display on order details, My Account, and thank-you page
+* Customer-facing tracking timeline with scan history on My Account order view
+* Delhivery tracking info in WooCommerce order emails (processing, completed, invoice)
+* Send Tracking Email: one-click branded tracking email to customers with live status, EDD, and scan history
+* Delhivery status column in the admin orders list with badge indicators
+* Bulk operations: create shipments, sync tracking, generate labels, and request pickups in bulk
+* REST webhook endpoint for Delhivery status updates with scan history
+* REST tracking endpoint for authenticated customers
 * Native WooCommerce settings tab for token management and connection testing
 * Activation guard so the plugin cannot be activated without WooCommerce
 
@@ -43,15 +53,49 @@ Go to `WooCommerce > Settings > Delhivery`, save your token, and use the built-i
 
 = Does this plugin use WordPress HTTP APIs or cURL? =
 
-This plugin uses PHP cURL for Delhivery API requests.
+This plugin uses the WordPress HTTP API for Delhivery API requests.
 
 == Webhook ==
 
 Use this endpoint in Delhivery if webhook delivery is enabled for your account:
 
-`/wp-json/delhivery/v1/webhook`
+`/wp-json/delhivery-wc/v1/webhook`
+
+== REST API ==
+
+Additional REST endpoints:
+
+* `GET /wp-json/delhivery-wc/v1/serviceability?pin=XXXXXX` — public pincode check
+* `GET /wp-json/delhivery-wc/v1/tracking?order_id=123` — authenticated customer tracking with live scan history
 
 == Changelog ==
+
+= 0.3.0 =
+
+* Added custom WooCommerce order statuses: "Manifested" and "Pickup Scheduled"
+* Added settings to configure order status after shipment manifest and pickup request
+* Order status automatically updates through the Delhivery lifecycle: Processing → Manifested → Pickup Scheduled → Processing (in transit) → Completed
+* Hourly tracking sync now includes orders in Manifested and Pickup Scheduled statuses
+* Pickup-related Delhivery statuses now display with info-style badge in admin
+
+= 0.2.0 =
+
+* Added NDR (Non-Delivery Report) management: re-attempt delivery or return-to-origin from order admin
+* Added shipment update capability for manifested shipments
+* Added reverse pickup creation for returns/refunds
+* Added auto-reverse pickup on refund setting
+* Added Download POD action for delivered orders
+* Added estimated delivery date on order details, My Account, and thank-you page
+* Added customer-facing tracking timeline with scan history on My Account order view
+* Added Delhivery tracking info in WooCommerce order emails (processing, completed, on-hold, invoice)
+* Added Send Tracking Email button to manually email customers a branded tracking notification with scan history
+* Added Delhivery status column in admin orders list
+* Added bulk operations: create shipments, sync tracking, generate labels, request pickups
+* Added REST tracking endpoint for authenticated customers
+* Enhanced webhook handler to store scan history, location, and EDD
+* Context-aware meta box buttons: show only relevant actions based on shipment state
+* NDR status auto-sets WooCommerce order to on-hold for admin attention
+* Stores tracking URL, reverse waybill, and NDR action metadata
 
 = 0.1.1 =
 

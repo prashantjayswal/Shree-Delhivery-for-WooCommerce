@@ -1,86 +1,63 @@
-# 📦 Shree Delhivery – WooCommerce Shipping Integration
+# Shree Delhivery for WooCommerce
 
-**Shree Delhivery** is a custom WooCommerce plugin that integrates your online store with Delhivery logistics services, enabling automated shipping, tracking, and order fulfillment directly from your WordPress dashboard.
+WooCommerce integration for Delhivery shipping rates, serviceability, shipment creation, tracking, labels, pickup requests, and status sync.
 
----
+## Features
 
-## 🚀 Features
+- Custom Order Statuses: Manifested & Pickup Scheduled
+- Configurable Order Status Transitions (after manifest & pickup)
+- Automatic Shipment Creation on Order Processing
+- AWB (Waybill) Generation
+- Shipping Label & POD Download
+- Pickup Request Creation
+- Real-time Order Tracking with Customer Timeline
+- COD & Prepaid Support
+- Pincode Serviceability Check
+- Send Tracking Email to Customers
+- Delhivery Status Column in Orders List
+- Bulk Operations (Create Shipments, Sync Tracking, Generate Labels, Request Pickups)
+- Reverse Pickup for Returns/Refunds
+- NDR Management (Re-attempt / Return to Origin)
+- Estimated Delivery Date on Order Pages & Emails
+- Webhook Support for Real-time Status Updates
+- Tracking Info in WooCommerce Emails
 
-- 📦 Automatic Order Sync
-- 🏷️ AWB Generation
-- 🖨️ Shipping Label Download
-- 🚚 Pickup Request Creation
-- 📊 Real-time Order Tracking
-- 💰 COD & Prepaid Support
-- 🌍 Pincode Serviceability Check
+## Requirements
 
----
-
-## 🧰 Requirements
-
-- WordPress (latest version recommended)
+- WordPress 6.4 or later
 - WooCommerce (latest stable version)
-- Active Delhivery account with API credentials
+- PHP 7.4 or later
+- Active Delhivery account with API token
 
----
+## Installation
 
-## 📥 Installation
+Upload to `/wp-content/plugins/delhivery-woocommerce/` and activate from WordPress admin.
 
-```bash
-git clone https://github.com/prashantjayswal/Shree-Delhivery-for-WooCommerce.git
-```
+## Configuration
 
-Upload to:
+Go to **WooCommerce > Settings > Delhivery** and add:
 
-```
-/wp-content/plugins/
-```
+- API Token
+- Pickup Location Name
+- Warehouse & Return Address
 
-Activate from WordPress admin.
+Use the built-in **Test Connection** button to verify your credentials.
 
----
+## Third-Party Service
 
-## ⚙️ Configuration
+This plugin connects to the **Delhivery logistics API** to provide shipping functionality.
 
-Go to:
+- **Service URL:** https://www.delhivery.com
+- **API Endpoints:** `https://track.delhivery.com/` (production), `https://staging-express.delhivery.com/` (sandbox)
+- **Data transmitted:** Customer name, shipping address, phone number, postcode, order details (products, weight, amounts), and your API token for authentication.
+- **When data is sent:** Checking postcode serviceability, calculating shipping rates, creating/updating/tracking/cancelling shipments, generating labels, requesting pickups, and receiving webhook updates.
+- **Delhivery Terms of Service:** https://www.delhivery.com/terms-and-conditions
+- **Delhivery Privacy Policy:** https://www.delhivery.com/privacy-policy
 
-WooCommerce → Settings → Shipping → Shree Delhivery
+## Author
 
-Add:
-- API Key
-- Client ID
-- Pickup Location
+Prashant Jayswal
 
----
+## License
 
-## 🧪 How to Use
-
-1. Place an order  
-2. Go to WooCommerce → Orders  
-3. Click “Create Shipment”  
-4. Generate AWB & download label  
-
----
-
-## 🤝 Contributing
-
-Fork, create branch, and submit PR.
-
----
-
-## 🧑‍💻 Hire Me
-
-Need custom development?
-
-- WooCommerce plugins  
-- Payment & shipping integrations  
-- Laravel / PHP APIs  
-
-**Prashant Jayswal**  
-Senior PHP Developer (12+ years)
-
----
-
-## 📄 License
-
-MIT License
+GPLv2 or later. See [LICENSE](LICENSE) for details.
