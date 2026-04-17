@@ -30,56 +30,61 @@ class Delhivery_WC_Api_Client
     public function request(string $method, string $path, array $args = array()): array
     {
         $url = $this->build_url($path, $args['query'] ?? array());
-        $ch = curl_init($url);
         $headers = $this->build_headers($args['headers'] ?? array(), ! empty($args['form_encoded']));
         $body = $args['body'] ?? array();
 
-        curl_setopt_array($ch, array(
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_TIMEOUT => 45,
-            CURLOPT_HTTPHEADER => $headers,
-        ));
+        $wp_args = array(
+            'method'    => strtoupper($method),
+            'headers'   => $headers,
+            'timeout'   => 45,
+            'redirection' => 5,
+        );
 
         if ('POST' === strtoupper($method)) {
             if (! empty($args['form_encoded'])) {
-                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($body));
+                $wp_args['body'] = http_build_query($body);
             } else {
-                curl_setopt($ch, CURLOPT_POSTFIELDS, wp_json_encode($body));
+                $wp_args['body'] = wp_json_encode($body);
             }
         }
 
-        $raw_response = curl_exec($ch);
-        $curl_error = curl_error($ch);
-        $status_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $wp_response = wp_remote_request($url, $wp_args);
+
+        if (is_wp_error($wp_response)) {
+            $error_message = $wp_response->get_error_message();
+
+            if ($this->settings->get('debug') === 'yes') {
+                $this->log('Request: ' . $method . ' ' . $url);
+                $this->log('WP Error: ' . $error_message);
+            }
+
+            return array(
+                'success' => false,
+                'status_code' => 0,
+                'message' => $error_message,
+                'data' => null,
+                'raw' => '',
+            );
+        }
+
+        $status_code = (int) wp_remote_retrieve_response_code($wp_response);
+        $raw_response = wp_remote_retrieve_body($wp_response);
 
         if ($this->settings->get('debug') === 'yes') {
             $this->log('Request: ' . $method . ' ' . $url);
             if (! empty($body)) {
                 $this->log('Payload: ' . wp_json_encode($body));
             }
-            $this->log('Response: ' . (string) $raw_response);
+            $this->log('Response: ' . $raw_response);
         }
 
-        if ($curl_error) {
-            return array(
-                'success' => false,
-                'status_code' => $status_code,
-                'message' => $curl_error,
-                'data' => null,
-                'raw' => $raw_response,
-            );
-        }
-
-        $decoded = json_decode((string) $raw_response, true);
+        $decoded = json_decode($raw_response, true);
         $success = $status_code >= 200 && $status_code < 300;
 
         return array(
             'success' => $success,
             'status_code' => $status_code,
-            'message' => $success ? '' : $this->extract_message($decoded, (string) $raw_response),
+            'message' => $success ? '' : $this->extract_message($decoded, $raw_response),
             'data' => is_array($decoded) ? $decoded : null,
             'raw' => $raw_response,
         );
@@ -181,14 +186,37 @@ class Delhivery_WC_Api_Client
         return $this->post('api/backend/clientwarehouse/edit/', $payload);
     }
 
-    public function apply_ndr(array $payload): array
+    public function update_shipment(array $payload): array
     {
+        return $this->post('api/p/edit', $payload);
+    }
+
+    public function download_document(string $waybill): array
+    {
+        return $this->get('api/p/packing_slip', array(
+            'wbns' => $waybill,
+            'pdf'  => 'true',
+        ));
+    }
+
+    public function create_reverse_pickup(array $payload): array
+    {
+        return $this->post('api/reverse/create/', $payload);
+    }
+
+    public function apply_ndr(string $waybill, string $action, array $extra = array()): array
+    {
+        $payload = array_merge(array(
+            'waybill' => $waybill,
+            'act'     => $action,
+        ), $extra);
+
         return $this->post('api/p/update', $payload);
     }
 
-    public function get_ndr_status(string $request_id): array
+    public function get_ndr_status(string $waybill): array
     {
-        return $this->get('api/cmu/get_bulk_upl/' . rawurlencode($request_id), array('verbose' => 'true'));
+        return $this->get('api/p/info', array('waybill' => $waybill, 'verbose' => 'true'));
     }
 
     private function build_url(string $path, array $query = array()): string
@@ -197,7 +225,7 @@ class Delhivery_WC_Api_Client
             ? 'https://staging-express.delhivery.com/'
             : 'https://track.delhivery.com/';
 
-        if (0 === strpos($path, 'api/dc/') || 0 === strpos($path, 'api/cmu/') || 0 === strpos($path, 'api/v1/') || 0 === strpos($path, 'api/p/') || 0 === strpos($path, 'api/backend/') || 0 === strpos($path, 'c/api/') || 0 === strpos($path, 'waybill/api/') || 0 === strpos($path, 'fm/')) {
+        if (0 === strpos($path, 'api/dc/') || 0 === strpos($path, 'api/cmu/') || 0 === strpos($path, 'api/v1/') || 0 === strpos($path, 'api/p/') || 0 === strpos($path, 'api/backend/') || 0 === strpos($path, 'api/kinko/') || 0 === strpos($path, 'api/reverse/') || 0 === strpos($path, 'c/api/') || 0 === strpos($path, 'waybill/api/') || 0 === strpos($path, 'fm/')) {
             $url = trailingslashit($base) . ltrim($path, '/');
         } else {
             $url = $path;
@@ -213,16 +241,15 @@ class Delhivery_WC_Api_Client
     private function build_headers(array $headers = array(), bool $form_encoded = false): array
     {
         $default_headers = array(
-            'Accept: application/json',
-            'Authorization: Token ' . trim((string) $this->settings->get('api_token')),
+            'Accept'        => 'application/json',
+            'Authorization' => 'Token ' . trim((string) $this->settings->get('api_token')),
+            'Content-Type'  => $form_encoded
+                ? 'application/x-www-form-urlencoded'
+                : 'application/json',
         );
 
-        $default_headers[] = $form_encoded
-            ? 'Content-Type: application/x-www-form-urlencoded'
-            : 'Content-Type: application/json';
-
-        foreach ($headers as $header) {
-            $default_headers[] = $header;
+        foreach ($headers as $key => $value) {
+            $default_headers[$key] = $value;
         }
 
         return $default_headers;

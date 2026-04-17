@@ -12,7 +12,7 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         $this->instance_id = absint($instance_id);
         $this->method_title = __('Delhivery Shipping', 'delhivery-woocommerce');
         $this->method_description = __('Live Delhivery serviceability, TAT, and shipping rates for WooCommerce checkout.', 'delhivery-woocommerce');
-        $this->supports = array('shipping-zones', 'instance-settings');
+        $this->supports = array('shipping-zones', 'instance-settings', 'instance-settings-modal');
 
         $this->init();
     }
@@ -46,6 +46,7 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         $client = $plugin->get_api_client();
 
         if (! $settings || ! $client || ! $settings->is_enabled() || $settings->get('enable_rates') !== 'yes') {
+            $this->log_shipping_debug('Delhivery rate calculation skipped: plugin not enabled or missing settings.');
             return;
         }
 
@@ -53,16 +54,35 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         $origin_pin = (string) $settings->get('origin_pin');
 
         if (! $destination_pin || ! $origin_pin) {
+            $this->log_shipping_debug('Delhivery rate calculation skipped: missing origin or destination pin.', array(
+                'origin_pin' => $origin_pin,
+                'destination_pin' => $destination_pin,
+            ));
+            return;
+        }
+
+        $is_cod = $this->cart_has_cod_gateway();
+        $cache_key = 'delhivery_wc_rate_' . md5($origin_pin . '_' . $destination_pin . '_' . $this->get_package_weight_grams($package) . '_' . ($is_cod ? 'cod' : 'prepaid'));
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            $this->add_rate(array(
+                'label'   => $cached['label'],
+                'cost'    => $cached['cost'],
+                'package' => $package,
+            ));
             return;
         }
 
         $serviceability = $client->get_serviceability($destination_pin);
-        if (! $serviceability['success'] || empty($serviceability['data'])) {
+        if (! $serviceability['success'] || ! $this->is_pin_serviceable($serviceability['data'])) {
+            $this->log_shipping_debug('Delhivery rate calculation skipped: pincode not serviceable.', array(
+                'destination_pin' => $destination_pin,
+                'response' => $serviceability,
+            ));
             return;
         }
 
         $weight_grams = $this->get_package_weight_grams($package);
-        $is_cod = $this->cart_has_cod_gateway();
         $shipping_mode = (string) $settings->get('transport_mode', 'S');
         $payment_type = $is_cod ? (string) $settings->get('payment_type_cod', 'COD') : (string) $settings->get('payment_type_prepaid', 'Pre-paid');
 
@@ -75,9 +95,7 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
             'pt' => $payment_type,
         ));
 
-        $tat_response = $client->get_expected_tat($origin_pin, $destination_pin, $shipping_mode, 'B2C');
         $rate_cost = $this->extract_rate_cost($cost_response);
-        $tat_label = $this->extract_tat_label($tat_response);
 
         if (null === $rate_cost) {
             $this->log_shipping_debug('Delhivery shipping cost missing or unparseable.', array(
@@ -90,15 +108,33 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         }
 
         $label = $this->title;
+
+        $tat_response = $client->get_expected_tat($origin_pin, $destination_pin, $shipping_mode, 'B2C');
+        $tat_label = $this->extract_tat_label($tat_response);
         if ($tat_label) {
             $label .= ' (' . $tat_label . ')';
         }
 
+        set_transient($cache_key, array('label' => $label, 'cost' => $rate_cost), 30 * MINUTE_IN_SECONDS);
+
         $this->add_rate(array(
-            'id' => $this->id,
-            'label' => $label,
-            'cost' => $rate_cost,
+            'label'   => $label,
+            'cost'    => $rate_cost,
+            'package' => $package,
         ));
+    }
+
+    private function is_pin_serviceable(?array $data): bool
+    {
+        if (! is_array($data)) {
+            return false;
+        }
+
+        if (isset($data['delivery_codes']) && is_array($data['delivery_codes'])) {
+            return ! empty($data['delivery_codes']);
+        }
+
+        return ! empty($data);
     }
 
     private function get_package_weight_grams(array $package): int

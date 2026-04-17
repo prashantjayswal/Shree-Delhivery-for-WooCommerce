@@ -16,8 +16,8 @@ class Delhivery_WC_Settings
         add_filter('woocommerce_settings_tabs_array', array($this, 'register_settings_tab'), 50);
         add_action('woocommerce_settings_tabs_' . self::TAB_ID, array($this, 'render_settings_page'));
         add_action('woocommerce_update_options_' . self::TAB_ID, array($this, 'save_settings'));
-        add_action('woocommerce_admin_field_delhivery_test_connection', array($this, 'render_test_connection_field'));
-        add_action('woocommerce_admin_field_delhivery_token', array($this, 'render_token_field'));
+        add_action('woocommerce_admin_field_delhivery_wc_test_connection', array($this, 'render_test_connection_field'));
+        add_action('woocommerce_admin_field_delhivery_wc_token', array($this, 'render_token_field'));
         add_action('admin_footer', array($this, 'render_admin_scripts'));
         add_action('admin_post_delhivery_wc_test_connection', array($this, 'handle_test_connection'));
         add_action('admin_notices', array($this, 'maybe_render_admin_notice'));
@@ -25,7 +25,7 @@ class Delhivery_WC_Settings
 
     public function register_settings_tab(array $tabs): array
     {
-        $tabs[self::TAB_ID] = __('Delhivery', 'delhivery-woocommerce') . ' ' . $this->get_status_badge_html();
+        $tabs[self::TAB_ID] = __('Delhivery', 'delhivery-woocommerce');
         return $tabs;
     }
 
@@ -41,6 +41,13 @@ class Delhivery_WC_Settings
         WC_Admin_Settings::save_fields($this->get_settings_fields());
 
         $saved = get_option(self::OPTION_KEY, array());
+
+        // WC_Admin_Settings::save_fields does not handle custom field types.
+        // Manually read the token from $_POST if present.
+        if (isset($_POST[self::OPTION_KEY]['api_token'])) {
+            $saved['api_token'] = sanitize_text_field(wp_unslash($_POST[self::OPTION_KEY]['api_token']));
+        }
+
         $sanitized = $this->sanitize($saved);
         update_option(self::OPTION_KEY, $sanitized);
 
@@ -79,10 +86,13 @@ class Delhivery_WC_Settings
     public function sanitize(array $input): array
     {
         $output = array();
+        $errors = array();
+
         $text_fields = array(
             'api_token', 'pickup_location', 'shipping_title', 'shipping_mode', 'transport_mode', 'payment_type_prepaid',
             'payment_type_cod', 'origin_pin', 'warehouse_phone', 'warehouse_email', 'warehouse_city', 'warehouse_pin',
-            'warehouse_state', 'warehouse_country', 'return_city', 'return_pin', 'return_state', 'return_country'
+            'warehouse_state', 'warehouse_country', 'return_city', 'return_pin', 'return_state', 'return_country',
+            'status_after_manifest', 'status_after_pickup'
         );
 
         foreach ($text_fields as $field) {
@@ -94,8 +104,75 @@ class Delhivery_WC_Settings
             $output[$field] = isset($input[$field]) ? sanitize_textarea_field((string) $input[$field]) : '';
         }
 
-        foreach (array('enabled', 'debug', 'sandbox', 'auto_manifest', 'auto_pickup', 'enable_rates') as $field) {
+        foreach (array('enabled', 'debug', 'sandbox', 'auto_manifest', 'auto_pickup', 'auto_reverse_pickup', 'enable_rates') as $field) {
             $output[$field] = ! empty($input[$field]) && 'yes' === (string) $input[$field] ? 'yes' : 'no';
+        }
+
+        // Validate origin pin (6-digit Indian pincode).
+        if ('' !== $output['origin_pin'] && ! preg_match('/^\d{6}$/', $output['origin_pin'])) {
+            $errors[] = __('Origin pin must be a 6-digit Indian pincode.', 'delhivery-woocommerce');
+            $output['origin_pin'] = '';
+        }
+
+        // Validate warehouse pin.
+        if ('' !== $output['warehouse_pin'] && ! preg_match('/^\d{6}$/', $output['warehouse_pin'])) {
+            $errors[] = __('Warehouse pin must be a 6-digit Indian pincode.', 'delhivery-woocommerce');
+            $output['warehouse_pin'] = '';
+        }
+
+        // Validate return pin.
+        if ('' !== $output['return_pin'] && ! preg_match('/^\d{6}$/', $output['return_pin'])) {
+            $errors[] = __('Return pin must be a 6-digit Indian pincode.', 'delhivery-woocommerce');
+            $output['return_pin'] = '';
+        }
+
+        // Validate warehouse phone (digits, optional +, 10-15 chars).
+        if ('' !== $output['warehouse_phone'] && ! preg_match('/^\+?\d{10,15}$/', $output['warehouse_phone'])) {
+            $errors[] = __('Warehouse phone must be 10-15 digits (optional leading +).', 'delhivery-woocommerce');
+            $output['warehouse_phone'] = '';
+        }
+
+        // Validate warehouse email.
+        if ('' !== $output['warehouse_email'] && ! is_email($output['warehouse_email'])) {
+            $errors[] = __('Warehouse email is not a valid email address.', 'delhivery-woocommerce');
+            $output['warehouse_email'] = '';
+        }
+
+        // Validate shipping mode.
+        if (! in_array($output['shipping_mode'], array('Surface', 'Express'), true)) {
+            $output['shipping_mode'] = 'Surface';
+        }
+
+        // Validate status_after_manifest.
+        if (! in_array($output['status_after_manifest'], array('', 'processing', 'delhivery-manifest'), true)) {
+            $output['status_after_manifest'] = '';
+        }
+
+        // Validate status_after_pickup.
+        if (! in_array($output['status_after_pickup'], array('', 'processing', 'delhivery-pickup'), true)) {
+            $output['status_after_pickup'] = '';
+        }
+
+        // Validate transport mode.
+        if (! in_array($output['transport_mode'], array('S', 'E', 'N'), true)) {
+            $output['transport_mode'] = 'S';
+        }
+
+        // Require token when enabled.
+        if ('yes' === $output['enabled'] && '' === $output['api_token']) {
+            $errors[] = __('Cannot enable plugin without a Delhivery token.', 'delhivery-woocommerce');
+            $output['enabled'] = 'no';
+        }
+
+        // Require pickup location when auto-manifest is on.
+        if ('yes' === $output['auto_manifest'] && '' === $output['pickup_location']) {
+            $errors[] = __('Pickup location is required when auto-create shipment is enabled.', 'delhivery-woocommerce');
+            $output['auto_manifest'] = 'no';
+        }
+
+        if (! empty($errors)) {
+            $message = implode(' ', $errors);
+            $this->set_notice($message, 'error');
         }
 
         return $output;
@@ -108,26 +185,54 @@ class Delhivery_WC_Settings
             'delhivery_wc_test_connection'
         );
         $status = $this->get_token_status();
+        $state = (string) ($status['state'] ?? '');
+
+        $state_classes = array(
+            'valid'    => 'delhivery-wc-badge--success',
+            'invalid'  => 'delhivery-wc-badge--error',
+            'missing'  => 'delhivery-wc-badge--warning',
+            'untested' => 'delhivery-wc-badge--warning',
+        );
+        $state_labels = array(
+            'valid'    => __('Connected', 'delhivery-woocommerce'),
+            'invalid'  => __('Invalid', 'delhivery-woocommerce'),
+            'missing'  => __('Missing', 'delhivery-woocommerce'),
+            'untested' => __('Untested', 'delhivery-woocommerce'),
+        );
 
         echo '<tr valign="top">';
         echo '<th scope="row" class="titledesc">' . esc_html($field['title'] ?? __('Test Connection', 'delhivery-woocommerce')) . '</th>';
-        echo '<td class="forminp">';
-        echo '<a class="button button-secondary" href="' . esc_url($url) . '">' . esc_html__('Test Delhivery Connection', 'delhivery-woocommerce') . '</a>';
+        echo '<td class="forminp forminp-delhivery-wc-test-connection">';
+        echo '<div class="delhivery-wc-connection-box">';
+
+        // Status badge.
+        if ('' !== $state) {
+            $badge_class = $state_classes[$state] ?? 'delhivery-wc-badge--muted';
+            $badge_label = $state_labels[$state] ?? ucfirst($state);
+            echo '<span class="delhivery-wc-badge ' . esc_attr($badge_class) . '">' . esc_html($badge_label) . '</span>';
+        }
+
+        echo '<a class="button button-secondary" href="' . esc_url($url) . '">';
+        echo '<span class="dashicons dashicons-update" style="margin-top:3px;margin-right:3px;"></span> ';
+        echo esc_html__('Test Connection', 'delhivery-woocommerce');
+        echo '</a>';
 
         if (! empty($field['description'])) {
             echo '<p class="description">' . wp_kses_post($field['description']) . '</p>';
         }
 
-        if (! empty($status['state'])) {
-            $label = ucfirst((string) $status['state']);
-            $message = ! empty($status['message']) ? ' - ' . (string) $status['message'] : '';
-            echo '<p><strong>' . esc_html__('Last result:', 'delhivery-woocommerce') . '</strong> ' . esc_html($label . $message) . '</p>';
+        if (! empty($status['message'])) {
+            echo '<p class="description"><em>' . esc_html((string) $status['message']) . '</em></p>';
         }
 
         if (! empty($status['checked_at'])) {
-            echo '<p><strong>' . esc_html__('Last checked:', 'delhivery-woocommerce') . '</strong> ' . esc_html((string) $status['checked_at']) . '</p>';
+            echo '<p class="description">';
+            /* translators: %s: date and time of last check */
+            echo esc_html(sprintf(__('Last checked: %s', 'delhivery-woocommerce'), (string) $status['checked_at']));
+            echo '</p>';
         }
 
+        echo '</div>';
         echo '</td>';
         echo '</tr>';
     }
@@ -136,19 +241,31 @@ class Delhivery_WC_Settings
     {
         $option_key = self::OPTION_KEY . '[api_token]';
         $value = (string) $this->get('api_token', '');
+        $field_id = esc_attr($field['id']);
 
         echo '<tr valign="top">';
-        echo '<th scope="row" class="titledesc"><label for="' . esc_attr($field['id']) . '">' . esc_html($field['title']) . '</label></th>';
-        echo '<td class="forminp">';
-        echo '<input id="' . esc_attr($field['id']) . '" name="' . esc_attr($option_key) . '" type="password" class="regular-text delhivery-token-field" value="' . esc_attr($value) . '" autocomplete="off" />';
-        echo ' <button type="button" class="button delhivery-toggle-token" data-target="' . esc_attr($field['id']) . '">' . esc_html__('Show token', 'delhivery-woocommerce') . '</button>';
+        echo '<th scope="row" class="titledesc">';
+        echo '<label for="' . $field_id . '">' . esc_html($field['title']) . '</label>';
+        echo '</th>';
+        echo '<td class="forminp forminp-delhivery-wc-token">';
+        echo '<div class="delhivery-wc-token-wrap">';
+        echo '<input id="' . $field_id . '" name="' . esc_attr($option_key) . '" type="password" ';
+        echo 'class="input-text regular-input delhivery-wc-token-field" style="min-width:350px;" ';
+        echo 'value="' . esc_attr($value) . '" autocomplete="new-password" spellcheck="false" />';
+        echo ' <button type="button" class="button button-secondary delhivery-wc-toggle-token" data-target="' . $field_id . '">';
+        echo '<span class="dashicons dashicons-visibility" style="margin-top:3px;"></span> ';
+        echo esc_html__('Show', 'delhivery-woocommerce');
+        echo '</button>';
+        echo '</div>';
 
         if (! empty($field['desc'])) {
             echo '<p class="description">' . wp_kses_post($field['desc']) . '</p>';
         }
 
         if (! empty($field['desc_tip'])) {
-            echo '<p class="description">' . esc_html__('The plugin automatically sends Authorization: Token YOUR_TOKEN.', 'delhivery-woocommerce') . '</p>';
+            echo '<p class="description"><span class="dashicons dashicons-info-outline" style="font-size:14px;width:14px;height:14px;margin-right:2px;vertical-align:text-bottom;"></span>';
+            echo esc_html__('The plugin sends this as: Authorization: Token YOUR_TOKEN', 'delhivery-woocommerce');
+            echo '</p>';
         }
 
         echo '</td>';
@@ -229,140 +346,289 @@ class Delhivery_WC_Settings
     {
         return array(
             array(
-                'title' => __('Shree Delhivery Settings', 'delhivery-woocommerce'),
+                'title' => __('API Configuration', 'delhivery-woocommerce'),
                 'type' => 'title',
                 'id' => 'delhivery_wc_api_section',
-                'desc' => __('Paste the raw Delhivery token only. The plugin sends it as Authorization: Token YOUR_TOKEN.', 'delhivery-woocommerce'),
+                'desc' => __('Connect your Delhivery account. Paste the raw token value — the plugin handles the Authorization header automatically.', 'delhivery-woocommerce'),
             ),
             array(
-                'title' => __('Enable plugin', 'delhivery-woocommerce'),
+                'title' => __('Enable Delhivery', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[enabled]',
                 'type' => 'checkbox',
+                'desc' => __('Activate Delhivery shipping integration on this store.', 'delhivery-woocommerce'),
                 'default' => 'no',
-                'checkboxgroup' => 'start',
+            ),
+            array(
+                'title' => __('Sandbox mode', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[sandbox]',
+                'type' => 'checkbox',
+                'default' => 'yes',
+                'desc' => __('Use the Delhivery staging environment. Disable for production.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('API token', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[api_token]',
+                'type' => 'delhivery_wc_token',
+                'desc' => __('Paste only the raw token value here.', 'delhivery-woocommerce'),
+                'desc_tip' => true,
+            ),
+            array(
+                'title' => __('Pickup location name', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[pickup_location]',
+                'type' => 'text',
+                'desc' => __('Must match the warehouse name registered in Delhivery exactly (case-sensitive).', 'delhivery-woocommerce'),
+                'desc_tip' => true,
+                'css' => 'min-width:350px;',
+            ),
+            array(
+                'type' => 'delhivery_wc_test_connection',
+                'title' => __('Connection status', 'delhivery-woocommerce'),
+                'description' => __('Verify your credentials after saving.', 'delhivery-woocommerce'),
+                'id' => 'delhivery_wc_test_connection',
             ),
             array(
                 'title' => __('Debug logging', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[debug]',
                 'type' => 'checkbox',
                 'default' => 'no',
-                'checkboxgroup' => 'end',
-            ),
-            array(
-                'title' => __('Use sandbox', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[sandbox]',
-                'type' => 'checkbox',
-                'default' => 'yes',
-                'desc' => __('Enable this for Delhivery staging credentials. Disable it for production credentials.', 'delhivery-woocommerce'),
-            ),
-            array(
-                'title' => __('Delhivery token', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[api_token]',
-                'type' => 'delhivery_token',
-                'desc' => __('Paste only the raw token value here.', 'delhivery-woocommerce'),
-                'desc_tip' => true,
-            ),
-            array(
-                'title' => __('Pickup location / warehouse name', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[pickup_location]',
-                'type' => 'text',
-                'desc' => __('Must exactly match the warehouse name registered in Delhivery, including spaces and case.', 'delhivery-woocommerce'),
-                'desc_tip' => true,
-            ),
-            array(
-                'type' => 'delhivery_test_connection',
-                'title' => __('Test Connection', 'delhivery-woocommerce'),
-                'description' => __('Use this after saving the token to verify the Delhivery credentials immediately.', 'delhivery-woocommerce'),
-                'id' => 'delhivery_wc_test_connection',
+                'desc' => __('Log API requests and responses to WooCommerce > Status > Logs.', 'delhivery-woocommerce'),
             ),
             array(
                 'type' => 'sectionend',
                 'id' => 'delhivery_wc_api_section',
             ),
+
+            // -- Shipping & Checkout --
             array(
-                'title' => __('Checkout and Shipping', 'delhivery-woocommerce'),
+                'title' => __('Shipping & Checkout', 'delhivery-woocommerce'),
                 'type' => 'title',
                 'id' => 'delhivery_wc_shipping_section',
+                'desc' => __('Control how Delhivery rates and options appear during checkout.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Show live shipping rates', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[enable_rates]',
+                'type' => 'checkbox',
+                'default' => 'yes',
+                'desc' => __('Display real-time Delhivery rates on the checkout page.', 'delhivery-woocommerce'),
             ),
             array(
                 'title' => __('Checkout label', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[shipping_title]',
                 'type' => 'text',
                 'default' => 'Delhivery',
+                'desc_tip' => __('Shipping method name shown to customers at checkout.', 'delhivery-woocommerce'),
+                'css' => 'min-width:250px;',
             ),
             array(
-                'title' => __('Default shipping mode', 'delhivery-woocommerce'),
+                'title' => __('Shipping mode', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[shipping_mode]',
                 'type' => 'select',
-                'options' => array('Surface' => 'Surface', 'Express' => 'Express'),
+                'options' => array('Surface' => __('Surface', 'delhivery-woocommerce'), 'Express' => __('Express', 'delhivery-woocommerce')),
                 'default' => 'Surface',
+                'desc_tip' => __('Default mode used when creating shipments.', 'delhivery-woocommerce'),
             ),
             array(
-                'title' => __('Expected TAT transport mode', 'delhivery-woocommerce'),
+                'title' => __('Rate calculation mode', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[transport_mode]',
                 'type' => 'select',
-                'options' => array('S' => 'Surface', 'E' => 'Express', 'N' => 'NDD'),
+                'options' => array(
+                    'S' => __('Surface', 'delhivery-woocommerce'),
+                    'E' => __('Express', 'delhivery-woocommerce'),
+                    'N' => __('NDD (Next Day Delivery)', 'delhivery-woocommerce'),
+                ),
                 'default' => 'S',
+                'desc_tip' => __('Transport mode sent to the Delhivery cost and TAT APIs.', 'delhivery-woocommerce'),
             ),
             array(
-                'title' => __('Prepaid rate label for cost API', 'delhivery-woocommerce'),
+                'title' => __('Origin pincode', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[origin_pin]',
+                'type' => 'text',
+                'desc_tip' => __('6-digit pincode of your shipping origin. Required for live rates.', 'delhivery-woocommerce'),
+                'placeholder' => __('e.g. 110001', 'delhivery-woocommerce'),
+                'custom_attributes' => array('pattern' => '\d{6}', 'maxlength' => '6'),
+                'css' => 'max-width:120px;',
+            ),
+            array(
+                'title' => __('Prepaid payment label', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[payment_type_prepaid]',
                 'type' => 'text',
                 'default' => 'Pre-paid',
+                'desc_tip' => __('Payment type label sent to Delhivery cost API for prepaid orders.', 'delhivery-woocommerce'),
+                'css' => 'max-width:150px;',
             ),
             array(
-                'title' => __('COD rate label for cost API', 'delhivery-woocommerce'),
+                'title' => __('COD payment label', 'delhivery-woocommerce'),
                 'id' => self::OPTION_KEY . '[payment_type_cod]',
                 'type' => 'text',
                 'default' => 'COD',
-            ),
-            array(
-                'title' => __('Origin pin', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[origin_pin]',
-                'type' => 'text',
-            ),
-            array(
-                'title' => __('Auto-create shipment on processing', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[auto_manifest]',
-                'type' => 'checkbox',
-                'default' => 'no',
-            ),
-            array(
-                'title' => __('Auto-create pickup after shipment creation', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[auto_pickup]',
-                'type' => 'checkbox',
-                'default' => 'no',
-            ),
-            array(
-                'title' => __('Show Delhivery live shipping rate', 'delhivery-woocommerce'),
-                'id' => self::OPTION_KEY . '[enable_rates]',
-                'type' => 'checkbox',
-                'default' => 'yes',
+                'desc_tip' => __('Payment type label sent to Delhivery cost API for COD orders.', 'delhivery-woocommerce'),
+                'css' => 'max-width:150px;',
             ),
             array(
                 'type' => 'sectionend',
                 'id' => 'delhivery_wc_shipping_section',
             ),
+
+            // -- Automation --
             array(
-                'title' => __('Warehouse Defaults', 'delhivery-woocommerce'),
+                'title' => __('Automation', 'delhivery-woocommerce'),
+                'type' => 'title',
+                'id' => 'delhivery_wc_automation_section',
+                'desc' => __('Automate shipment creation and pickup scheduling.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Auto-create shipment', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[auto_manifest]',
+                'type' => 'checkbox',
+                'default' => 'no',
+                'desc' => __('Automatically create a Delhivery shipment when an order moves to Processing.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Auto-request pickup', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[auto_pickup]',
+                'type' => 'checkbox',
+                'default' => 'no',
+                'desc' => __('Automatically request a Delhivery pickup after each shipment is created.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Auto-reverse pickup on refund', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[auto_reverse_pickup]',
+                'type' => 'checkbox',
+                'default' => 'no',
+                'desc' => __('Automatically create a Delhivery reverse pickup when an order is refunded.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Order status after manifest', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[status_after_manifest]',
+                'type' => 'select',
+                'options' => array(
+                    ''                    => __('— Do not change —', 'delhivery-woocommerce'),
+                    'processing'          => __('Processing', 'delhivery-woocommerce'),
+                    'delhivery-manifest'  => __('Manifested', 'delhivery-woocommerce'),
+                ),
+                'default' => '',
+                'desc_tip' => __('WooCommerce order status to set after a Delhivery shipment is manifested.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Order status after pickup', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[status_after_pickup]',
+                'type' => 'select',
+                'options' => array(
+                    ''                   => __('— Do not change —', 'delhivery-woocommerce'),
+                    'processing'         => __('Processing', 'delhivery-woocommerce'),
+                    'delhivery-pickup'   => __('Pickup Scheduled', 'delhivery-woocommerce'),
+                ),
+                'default' => '',
+                'desc_tip' => __('WooCommerce order status to set after a Delhivery pickup request is created.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'type' => 'sectionend',
+                'id' => 'delhivery_wc_automation_section',
+            ),
+
+            // -- Warehouse / Return address --
+            array(
+                'title' => __('Warehouse Address', 'delhivery-woocommerce'),
                 'type' => 'title',
                 'id' => 'delhivery_wc_warehouse_section',
+                'desc' => __('Sender details used when creating shipments.', 'delhivery-woocommerce'),
             ),
-            array('title' => __('Warehouse phone', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_phone]', 'type' => 'text'),
-            array('title' => __('Warehouse email', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_email]', 'type' => 'email'),
-            array('title' => __('Warehouse address', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_address]', 'type' => 'textarea'),
-            array('title' => __('Warehouse city', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_city]', 'type' => 'text'),
-            array('title' => __('Warehouse pin', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_pin]', 'type' => 'text'),
-            array('title' => __('Warehouse state', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_state]', 'type' => 'text'),
-            array('title' => __('Warehouse country', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[warehouse_country]', 'type' => 'text', 'default' => 'India'),
-            array('title' => __('Return address', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[return_address]', 'type' => 'textarea'),
-            array('title' => __('Return city', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[return_city]', 'type' => 'text'),
-            array('title' => __('Return pin', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[return_pin]', 'type' => 'text'),
-            array('title' => __('Return state', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[return_state]', 'type' => 'text'),
-            array('title' => __('Return country', 'delhivery-woocommerce'), 'id' => self::OPTION_KEY . '[return_country]', 'type' => 'text', 'default' => 'India'),
+            array(
+                'title' => __('Phone', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_phone]',
+                'type' => 'text',
+                'desc_tip' => __('10-15 digit phone number with optional + prefix.', 'delhivery-woocommerce'),
+                'placeholder' => __('e.g. +919876543210', 'delhivery-woocommerce'),
+                'custom_attributes' => array('pattern' => '\+?\d{10,15}', 'maxlength' => '16'),
+                'css' => 'max-width:200px;',
+            ),
+            array(
+                'title' => __('Email', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_email]',
+                'type' => 'email',
+                'css' => 'min-width:250px;',
+            ),
+            array(
+                'title' => __('Address', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_address]',
+                'type' => 'textarea',
+                'css' => 'min-width:350px;height:80px;',
+            ),
+            array(
+                'title' => __('City', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_city]',
+                'type' => 'text',
+                'css' => 'max-width:200px;',
+            ),
+            array(
+                'title' => __('Pincode', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_pin]',
+                'type' => 'text',
+                'placeholder' => __('e.g. 110001', 'delhivery-woocommerce'),
+                'custom_attributes' => array('pattern' => '\d{6}', 'maxlength' => '6'),
+                'css' => 'max-width:120px;',
+            ),
+            array(
+                'title' => __('State', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_state]',
+                'type' => 'text',
+                'css' => 'max-width:200px;',
+            ),
+            array(
+                'title' => __('Country', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[warehouse_country]',
+                'type' => 'text',
+                'default' => 'India',
+                'css' => 'max-width:200px;',
+            ),
             array(
                 'type' => 'sectionend',
                 'id' => 'delhivery_wc_warehouse_section',
+            ),
+
+            array(
+                'title' => __('Return Address', 'delhivery-woocommerce'),
+                'type' => 'title',
+                'id' => 'delhivery_wc_return_section',
+                'desc' => __('Where undelivered or returned shipments should be sent. Leave blank to use warehouse address.', 'delhivery-woocommerce'),
+            ),
+            array(
+                'title' => __('Address', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[return_address]',
+                'type' => 'textarea',
+                'css' => 'min-width:350px;height:80px;',
+            ),
+            array(
+                'title' => __('City', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[return_city]',
+                'type' => 'text',
+                'css' => 'max-width:200px;',
+            ),
+            array(
+                'title' => __('Pincode', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[return_pin]',
+                'type' => 'text',
+                'placeholder' => __('e.g. 110001', 'delhivery-woocommerce'),
+                'custom_attributes' => array('pattern' => '\d{6}', 'maxlength' => '6'),
+                'css' => 'max-width:120px;',
+            ),
+            array(
+                'title' => __('State', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[return_state]',
+                'type' => 'text',
+                'css' => 'max-width:200px;',
+            ),
+            array(
+                'title' => __('Country', 'delhivery-woocommerce'),
+                'id' => self::OPTION_KEY . '[return_country]',
+                'type' => 'text',
+                'default' => 'India',
+                'css' => 'max-width:200px;',
+            ),
+            array(
+                'type' => 'sectionend',
+                'id' => 'delhivery_wc_return_section',
             ),
         );
     }
@@ -383,6 +649,9 @@ class Delhivery_WC_Settings
             'origin_pin' => '',
             'auto_manifest' => 'no',
             'auto_pickup' => 'no',
+            'auto_reverse_pickup' => 'no',
+            'status_after_manifest' => '',
+            'status_after_pickup' => '',
             'enable_rates' => 'yes',
             'warehouse_phone' => '',
             'warehouse_email' => '',
@@ -453,23 +722,23 @@ class Delhivery_WC_Settings
         }
 
         $colors = array(
-            'valid' => '#2271b1',
-            'invalid' => '#d63638',
-            'missing' => '#dba617',
-            'untested' => '#996800',
+            'valid'    => 'background:#d4edda;color:#155724;',
+            'invalid'  => 'background:#f8d7da;color:#721c24;',
+            'missing'  => 'background:#fff3cd;color:#856404;',
+            'untested' => 'background:#fff3cd;color:#856404;',
         );
 
         $label_map = array(
-            'valid' => __('Connected', 'delhivery-woocommerce'),
-            'invalid' => __('Invalid', 'delhivery-woocommerce'),
-            'missing' => __('Missing', 'delhivery-woocommerce'),
+            'valid'    => __('Connected', 'delhivery-woocommerce'),
+            'invalid'  => __('Invalid', 'delhivery-woocommerce'),
+            'missing'  => __('Missing', 'delhivery-woocommerce'),
             'untested' => __('Untested', 'delhivery-woocommerce'),
         );
 
-        $color = $colors[$state] ?? '#646970';
+        $style = $colors[$state] ?? 'background:#e2e4e7;color:#50575e;';
         $label = $label_map[$state] ?? ucfirst($state);
 
-        return '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:' . esc_attr($color) . ';color:#fff;font-size:11px;line-height:1.8;vertical-align:middle;">' . esc_html($label) . '</span>';
+        return '<span class="delhivery-wc-tab-badge" style="' . esc_attr($style) . '">' . esc_html($label) . '</span>';
     }
 
     public function render_admin_scripts(): void
@@ -479,24 +748,186 @@ class Delhivery_WC_Settings
             return;
         }
 
+        // Inject badge into Delhivery tab on all WC settings pages.
+        $badge_html = $this->get_status_badge_html();
+        if ($badge_html) {
+            ?>
+            <script>
+            (function() {
+                var tabs = document.querySelectorAll('.nav-tab');
+                for (var i = 0; i < tabs.length; i++) {
+                    if (tabs[i].href && tabs[i].href.indexOf('tab=<?php echo esc_js(self::TAB_ID); ?>') !== -1) {
+                        tabs[i].insertAdjacentHTML('beforeend', <?php echo wp_json_encode(' ' . $badge_html); ?>);
+                        break;
+                    }
+                }
+            })();
+            </script>
+            <?php
+        }
+
         if (! isset($_GET['tab']) || self::TAB_ID !== sanitize_key((string) $_GET['tab'])) {
             return;
         }
         ?>
+        <style>
+            /* Badge styles */
+            .delhivery-wc-badge {
+                display: inline-block;
+                padding: 2px 10px;
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+                line-height: 1.6;
+                vertical-align: middle;
+                margin-right: 8px;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }
+            .delhivery-wc-badge--success  { background: #d4edda; color: #155724; }
+            .delhivery-wc-badge--error    { background: #f8d7da; color: #721c24; }
+            .delhivery-wc-badge--warning  { background: #fff3cd; color: #856404; }
+            .delhivery-wc-badge--info     { background: #cce5ff; color: #004085; }
+            .delhivery-wc-badge--muted    { background: #e2e4e7; color: #50575e; }
+
+            /* Connection box */
+            .delhivery-wc-connection-box {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .delhivery-wc-connection-box .description {
+                width: 100%;
+                margin-top: 4px;
+            }
+
+            /* Token field */
+            .delhivery-wc-token-wrap {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .delhivery-wc-token-field {
+                font-family: monospace;
+                letter-spacing: 1px;
+            }
+
+            /* Order meta box */
+            .delhivery-wc-meta-info {
+                margin: 0;
+                padding: 8px 0;
+            }
+            .delhivery-wc-meta-info dt {
+                font-weight: 600;
+                margin-bottom: 2px;
+                color: #1d2327;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }
+            .delhivery-wc-meta-info dd {
+                margin: 0 0 12px 0;
+                font-size: 13px;
+                color: #50575e;
+                word-break: break-all;
+            }
+            .delhivery-wc-meta-info dd:last-child {
+                margin-bottom: 4px;
+            }
+            .delhivery-wc-actions {
+                border-top: 1px solid #f0f0f1;
+                padding-top: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+            .delhivery-wc-actions .button {
+                text-align: center;
+                justify-content: center;
+            }
+            .delhivery-wc-actions .button .dashicons {
+                font-size: 16px;
+                width: 16px;
+                height: 16px;
+                margin-right: 4px;
+                vertical-align: text-bottom;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-danger {
+                color: #b32d2e;
+                border-color: #b32d2e;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-danger:hover {
+                background: #fcf0f1;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-warning {
+                color: #856404;
+                border-color: #856404;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-warning:hover {
+                background: #fff3cd;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-primary {
+                color: #fff;
+                background: #0073aa;
+                border-color: #0073aa;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-primary:hover {
+                background: #005a87;
+                border-color: #005a87;
+            }
+            .delhivery-wc-actions .delhivery-wc-btn-primary .dashicons {
+                color: #fff;
+            }
+
+            /* Nav tab badge */
+            .delhivery-wc-tab-badge {
+                display: inline-block;
+                margin-left: 6px;
+                padding: 1px 7px;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: 600;
+                line-height: 1.8;
+                vertical-align: middle;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }
+        </style>
         <script>
-        document.addEventListener('click', function (event) {
-            if (!event.target.classList.contains('delhivery-toggle-token')) {
-                return;
-            }
-            var targetId = event.target.getAttribute('data-target');
-            var field = document.getElementById(targetId);
-            if (!field) {
-                return;
-            }
-            var isPassword = field.getAttribute('type') === 'password';
-            field.setAttribute('type', isPassword ? 'text' : 'password');
-            event.target.textContent = isPassword ? 'Hide token' : 'Show token';
-        });
+        (function() {
+            /* Token show/hide toggle */
+            document.addEventListener('click', function(e) {
+                var btn = e.target.closest('.delhivery-wc-toggle-token');
+                if (!btn) return;
+                var field = document.getElementById(btn.getAttribute('data-target'));
+                if (!field) return;
+                var isPassword = field.type === 'password';
+                field.type = isPassword ? 'text' : 'password';
+                var icon = btn.querySelector('.dashicons');
+                if (icon) {
+                    icon.classList.toggle('dashicons-visibility', !isPassword);
+                    icon.classList.toggle('dashicons-hidden', isPassword);
+                }
+                var textNode = btn.lastChild;
+                if (textNode && textNode.nodeType === 3) {
+                    textNode.textContent = isPassword ? ' <?php echo esc_js(__('Hide', 'delhivery-woocommerce')); ?>' : ' <?php echo esc_js(__('Show', 'delhivery-woocommerce')); ?>';
+                }
+            });
+
+            /* Client-side pincode validation hint */
+            document.querySelectorAll('input[pattern="\\\\d{6}"]').forEach(function(input) {
+                input.addEventListener('blur', function() {
+                    if (this.value && !/^\d{6}$/.test(this.value)) {
+                        this.style.borderColor = '#d63638';
+                        this.setCustomValidity('<?php echo esc_js(__('Enter a 6-digit pincode', 'delhivery-woocommerce')); ?>');
+                    } else {
+                        this.style.borderColor = '';
+                        this.setCustomValidity('');
+                    }
+                });
+            });
+        })();
         </script>
         <?php
     }
