@@ -100,16 +100,9 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         $rates = array();
 
         // Loop through all combinations of shipping modes and package types
+        // Always calculate fresh rates if master cache doesn't exist
         foreach ($shipping_modes as $mode => $mode_label) {
             foreach ($package_types as $pkg_type => $pkg_label) {
-                $cache_key = $cache_key_base . '_' . $mode . '_' . $pkg_type;
-                $cached = get_transient($cache_key);
-
-                if (is_array($cached)) {
-                    $rates[] = $cached;
-                    continue;
-                }
-
                 $cost_response = $client->get_shipping_cost(array(
                     'md' => $mode,
                     'ss' => 'Delivered',
@@ -152,6 +145,9 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                 );
 
                 $rates[] = $rate;
+
+                // Cache individual rate
+                $cache_key = $cache_key_base . '_' . $mode . '_' . $pkg_type;
                 set_transient($cache_key, $rate, 30 * MINUTE_IN_SECONDS);
             }
         }
@@ -161,9 +157,16 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                 'destination_pin' => $destination_pin,
                 'origin_pin' => $origin_pin,
                 'weight_grams' => $weight_grams,
+                'attempted_combinations' => count($shipping_modes) * count($package_types),
             ));
             return;
         }
+
+        $this->log_shipping_debug('Delhivery shipping rates calculated successfully.', array(
+            'rates_found' => count($rates),
+            'destination_pin' => $destination_pin,
+            'origin_pin' => $origin_pin,
+        ));
 
         // Cache all rates together
         set_transient($cache_key_base, $rates, 30 * MINUTE_IN_SECONDS);
