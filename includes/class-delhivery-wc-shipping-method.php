@@ -45,7 +45,7 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         $settings = $plugin->get_settings();
         $client = $plugin->get_api_client();
 
-        if (! $settings || ! $client || ! $settings->is_enabled() || $settings->get('enable_rates') !== 'yes') {
+        if (! $settings || ! $client || ! $settings->is_enabled() || $settings->get('enable_rates') !== 'yes' || 'yes' !== $this->enabled) {
             $this->log_shipping_debug('Delhivery rate calculation skipped: plugin not enabled or missing settings.');
             return;
         }
@@ -66,9 +66,8 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         $cached = get_transient($cache_key);
         if (is_array($cached)) {
             $this->add_rate(array(
-                'label'   => $cached['label'],
-                'cost'    => $cached['cost'],
-                'package' => $package,
+                'label' => $cached['label'],
+                'cost'  => $cached['cost'],
             ));
             return;
         }
@@ -118,9 +117,8 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         set_transient($cache_key, array('label' => $label, 'cost' => $rate_cost), 30 * MINUTE_IN_SECONDS);
 
         $this->add_rate(array(
-            'label'   => $label,
-            'cost'    => $rate_cost,
-            'package' => $package,
+            'label' => $label,
+            'cost'  => $rate_cost,
         ));
     }
 
