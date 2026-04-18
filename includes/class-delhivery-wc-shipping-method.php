@@ -62,16 +62,10 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         }
 
         $is_cod = $this->cart_has_cod_gateway();
-        $cache_key = 'delhivery_wc_rate_' . md5($origin_pin . '_' . $destination_pin . '_' . $this->get_package_weight_grams($package) . '_' . ($is_cod ? 'cod' : 'prepaid'));
-        $cached = get_transient($cache_key);
-        if (is_array($cached)) {
-            $this->add_rate(array(
-                'label' => $cached['label'],
-                'cost'  => $cached['cost'],
-            ));
-            return;
-        }
+        $weight_grams = $this->get_package_weight_grams($package);
+        $payment_type = $is_cod ? (string) $settings->get('payment_type_cod', 'COD') : (string) $settings->get('payment_type_prepaid', 'Pre-paid');
 
+        // Check serviceability once for the destination pin
         $serviceability = $client->get_serviceability($destination_pin);
         if (! $serviceability['success'] || ! $this->is_pin_serviceable($serviceability['data'])) {
             $this->log_shipping_debug('Delhivery rate calculation skipped: pincode not serviceable.', array(
@@ -81,45 +75,103 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
             return;
         }
 
-        $weight_grams = $this->get_package_weight_grams($package);
-        $shipping_mode = (string) $settings->get('transport_mode', 'S');
-        $payment_type = $is_cod ? (string) $settings->get('payment_type_cod', 'COD') : (string) $settings->get('payment_type_prepaid', 'Pre-paid');
+        // Define shipping options: mode => label
+        $shipping_modes = array(
+            'S' => 'Surface',
+            'E' => 'Express',
+        );
 
-        $cost_response = $client->get_shipping_cost(array(
-            'md' => $shipping_mode,
-            'ss' => 'Delivered',
-            'd_pin' => $destination_pin,
-            'o_pin' => $origin_pin,
-            'cgm' => max(1, $weight_grams),
-            'pt' => $payment_type,
-        ));
+        // Define package types: type => label
+        $package_types = array(
+            'box' => 'Box',
+            'flyer' => 'Flyer',
+        );
 
-        $rate_cost = $this->extract_rate_cost($cost_response);
+        $cache_key_base = 'delhivery_wc_rates_' . md5($origin_pin . '_' . $destination_pin . '_' . $weight_grams . '_' . ($is_cod ? 'cod' : 'prepaid'));
+        $cached_rates = get_transient($cache_key_base);
 
-        if (null === $rate_cost) {
-            $this->log_shipping_debug('Delhivery shipping cost missing or unparseable.', array(
+        if (is_array($cached_rates)) {
+            foreach ($cached_rates as $rate) {
+                $this->add_rate($rate);
+            }
+            return;
+        }
+
+        $rates = array();
+
+        // Loop through all combinations of shipping modes and package types
+        foreach ($shipping_modes as $mode => $mode_label) {
+            foreach ($package_types as $pkg_type => $pkg_label) {
+                $cache_key = $cache_key_base . '_' . $mode . '_' . $pkg_type;
+                $cached = get_transient($cache_key);
+
+                if (is_array($cached)) {
+                    $rates[] = $cached;
+                    continue;
+                }
+
+                $cost_response = $client->get_shipping_cost(array(
+                    'md' => $mode,
+                    'ss' => 'Delivered',
+                    'd_pin' => $destination_pin,
+                    'o_pin' => $origin_pin,
+                    'cgm' => max(1, $weight_grams),
+                    'pt' => $payment_type,
+                    'ipkg_type' => $pkg_type,
+                ));
+
+                $rate_cost = $this->extract_rate_cost($cost_response);
+
+                if (null === $rate_cost) {
+                    $this->log_shipping_debug('Delhivery shipping cost missing for ' . $mode_label . ' ' . $pkg_label, array(
+                        'destination_pin' => $destination_pin,
+                        'origin_pin' => $origin_pin,
+                        'weight_grams' => $weight_grams,
+                        'mode' => $mode,
+                        'package_type' => $pkg_type,
+                        'cost_response' => $cost_response,
+                    ));
+                    continue;
+                }
+
+                $label = $this->title . ' ' . $mode_label . ' (' . $pkg_label . ')';
+
+                $tat_response = $client->get_expected_tat($origin_pin, $destination_pin, $mode, 'B2C');
+                $tat_label = $this->extract_tat_label($tat_response);
+                if ($tat_label) {
+                    $label .= ' (' . $tat_label . ')';
+                }
+
+                $rate = array(
+                    'label' => $label,
+                    'cost'  => $rate_cost,
+                    'meta_data' => array(
+                        'delhivery_mode' => $mode,
+                        'delhivery_package_type' => $pkg_type,
+                    ),
+                );
+
+                $rates[] = $rate;
+                set_transient($cache_key, $rate, 30 * MINUTE_IN_SECONDS);
+            }
+        }
+
+        if (empty($rates)) {
+            $this->log_shipping_debug('No valid Delhivery shipping rates found for any combination.', array(
                 'destination_pin' => $destination_pin,
                 'origin_pin' => $origin_pin,
                 'weight_grams' => $weight_grams,
-                'cost_response' => $cost_response,
             ));
             return;
         }
 
-        $label = $this->title;
+        // Cache all rates together
+        set_transient($cache_key_base, $rates, 30 * MINUTE_IN_SECONDS);
 
-        $tat_response = $client->get_expected_tat($origin_pin, $destination_pin, $shipping_mode, 'B2C');
-        $tat_label = $this->extract_tat_label($tat_response);
-        if ($tat_label) {
-            $label .= ' (' . $tat_label . ')';
+        // Add all rates
+        foreach ($rates as $rate) {
+            $this->add_rate($rate);
         }
-
-        set_transient($cache_key, array('label' => $label, 'cost' => $rate_cost), 30 * MINUTE_IN_SECONDS);
-
-        $this->add_rate(array(
-            'label' => $label,
-            'cost'  => $rate_cost,
-        ));
     }
 
     private function is_pin_serviceable(?array $data): bool
