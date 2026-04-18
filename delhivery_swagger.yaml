@@ -1,0 +1,479 @@
+openapi: 3.0.3
+info:
+  title: Delhivery B2C API (Production Complete)
+  version: 1.0.0
+  description: Fully validated and complete Swagger for Delhivery APIs
+
+servers:
+  - url: https://staging-express.delhivery.com
+  - url: https://track.delhivery.com
+
+components:
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+
+  schemas:
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+
+    ########################
+    # SERVICEABILITY
+    ########################
+    ServiceabilityItem:
+      type: object
+      properties:
+        postal_code:
+          type: string
+        cod:
+          type: boolean
+        prepaid:
+          type: boolean
+
+    ########################
+    # SHIPMENT
+    ########################
+    Shipment:
+      type: object
+      required:
+        - name
+        - add
+        - pin
+        - phone
+        - order
+      properties:
+        name: { type: string }
+        add: { type: string }
+        pin: { type: string }
+        city: { type: string }
+        state: { type: string }
+        country: { type: string }
+        phone: { type: string }
+        order: { type: string }
+        shipment_id: { type: string }
+        payment_mode:
+          type: string
+          enum: [Prepaid, COD]
+        cod_amount: { type: string }
+        total_amount: { type: string }
+        weight: { type: string }
+        quantity: { type: string }
+        shipment_length: { type: string }
+        shipment_width: { type: string }
+        shipment_height: { type: string }
+        product_name: { type: string }
+        category_of_goods: { type: string }
+        ewaybill: { type: string }
+        invoice_number: { type: string }
+        gst_number: { type: string }
+        is_reverse: { type: boolean }
+
+    ########################
+    # WAREHOUSE
+    ########################
+    Warehouse:
+      type: object
+      required:
+        - name
+        - address
+        - city
+        - state
+        - pin
+        - phone
+      properties:
+        name: { type: string }
+        address: { type: string }
+        city: { type: string }
+        state: { type: string }
+        country: { type: string }
+        pin: { type: string }
+        phone: { type: string }
+        email: { type: string }
+
+    ########################
+    # TRACKING
+    ########################
+    TrackingScan:
+      type: object
+      properties:
+        scan:
+          type: string
+        location:
+          type: string
+        time:
+          type: string
+
+    TrackingResponse:
+      type: object
+      properties:
+        waybill:
+          type: string
+        status:
+          type: string
+        scans:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackingScan'
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Serviceability
+  - name: EDD
+  - name: Cost
+  - name: Warehouse
+  - name: Shipment
+  - name: Pickup
+  - name: Tracking
+  - name: Label
+  - name: NDR
+  - name: Manifest
+  - name: Finance
+  - name: Webhook
+
+paths:
+
+  ########################
+  # SERVICEABILITY
+  ########################
+  /c/api/pin-codes/json/:
+    get:
+      tags: [Serviceability]
+      summary: Check serviceability
+      description: Check if a pincode is serviceable
+      parameters:
+        - name: filter_codes
+          in: query
+          schema: { type: string }
+        - name: pickup_postcode
+          in: query
+          schema: { type: string }
+        - name: cod
+          in: query
+          schema: { type: string, enum: [Y, N] }
+      responses:
+        '200':
+          description: Serviceable response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_codes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ServiceabilityItem'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  ########################
+  # EDD
+  ########################
+  /c/api/edd/json/:
+    get:
+      tags: [EDD]
+      summary: Get expected delivery date
+      description: Estimate delivery timeline
+      parameters:
+        - name: pickup_postcode
+          in: query
+          required: true
+          schema: { type: string }
+        - name: delivery_postcode
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: EDD result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  edd:
+                    type: string
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  ########################
+  # COST
+  ########################
+  /api/kinko/v1/invoice/charges:
+    get:
+      tags: [Cost]
+      summary: Calculate shipping cost
+      description: Returns estimated cost
+      parameters:
+        - name: md
+          in: query
+          schema: { type: string }
+        - name: cgm
+          in: query
+          schema: { type: integer }
+        - name: o_pin
+          in: query
+          schema: { type: integer }
+        - name: d_pin
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Cost result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_amount:
+                    type: number
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  ########################
+  # WAREHOUSE
+  ########################
+  /api/backend/clientwarehouse/create/:
+    post:
+      tags: [Warehouse]
+      summary: Create warehouse
+      description: Register pickup location
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Warehouse'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/backend/clientwarehouse/update/:
+    post:
+      tags: [Warehouse]
+      summary: Update warehouse
+      description: Update warehouse details
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Warehouse'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  ########################
+  # SHIPMENT
+  ########################
+  /api/cmu/create.json:
+    post:
+      tags: [Shipment]
+      summary: Create shipment
+      description: Create new shipment order
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                data:
+                  type: string
+      responses:
+        '200':
+          description: Created
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/cmu/edit.json:
+    post:
+      tags: [Shipment]
+      summary: Update shipment
+      description: Update shipment details
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: Error
+
+  /api/cmu/cancel.json:
+    post:
+      tags: [Shipment]
+      summary: Cancel shipment
+      description: Cancel existing shipment
+      responses:
+        '200':
+          description: Cancelled
+        '400':
+          description: Error
+
+  ########################
+  # WAYBILL
+  ########################
+  /waybill/api/bulk/json/:
+    get:
+      tags: [Shipment]
+      summary: Generate waybills
+      parameters:
+        - name: count
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Waybills generated
+        '400':
+          description: Error
+
+  ########################
+  # LABEL
+  ########################
+  /api/p/packing_slip:
+    get:
+      tags: [Label]
+      summary: Generate label
+      parameters:
+        - name: wbns
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Label
+        '400':
+          description: Error
+
+  ########################
+  # PICKUP
+  ########################
+  /api/fm/request/new/:
+    post:
+      tags: [Pickup]
+      summary: Schedule pickup
+      responses:
+        '200':
+          description: Pickup scheduled
+        '400':
+          description: Error
+
+  ########################
+  # TRACKING
+  ########################
+  /api/v1/packages/json/:
+    get:
+      tags: [Tracking]
+      summary: Track shipment
+      parameters:
+        - name: waybill
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Tracking response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackingResponse'
+        '400':
+          description: Error
+
+  ########################
+  # NDR
+  ########################
+  /api/v1/ndr/:
+    get:
+      tags: [NDR]
+      summary: Get NDR list
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Error
+
+  ########################
+  # MANIFEST
+  ########################
+  /api/p/manifest:
+    post:
+      tags: [Manifest]
+      summary: Generate manifest
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Error
+
+  ########################
+  # FINANCE
+  ########################
+  /api/finance/cod:
+    get:
+      tags: [Finance]
+      summary: COD remittance
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Error
+
+  ########################
+  # WEBHOOK
+  ########################
+  /webhooks/tracking:
+    post:
+      tags: [Webhook]
+      summary: Tracking webhook
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK

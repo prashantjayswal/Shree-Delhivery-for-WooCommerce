@@ -30,6 +30,7 @@ This plugin adds:
 * Bulk operations: create shipments, sync tracking, generate labels, and request pickups in bulk
 * REST webhook endpoint for Delhivery status updates with scan history
 * REST tracking endpoint for authenticated customers
+* Swagger-aligned REST endpoints for serviceability, EDD, cost, warehouse, manifest, NDR, COD remittance, and order actions
 * Native WooCommerce settings tab for token management and connection testing
 * Activation guard so the plugin cannot be activated without WooCommerce
 
@@ -65,8 +66,26 @@ Use this endpoint in Delhivery if webhook delivery is enabled for your account:
 
 Additional REST endpoints:
 
-* `GET /wp-json/delhivery-wc/v1/serviceability?pin=XXXXXX` — public pincode check
-* `GET /wp-json/delhivery-wc/v1/tracking?order_id=123` — authenticated customer tracking with live scan history
+* `GET /wp-json/delhivery-wc/v1/serviceability?pin=XXXXXX` - public pincode check
+* `GET /wp-json/delhivery-wc/v1/edd?pickup_postcode=110001&delivery_postcode=400001` - public expected delivery date lookup
+* `GET /wp-json/delhivery-wc/v1/cost?origin_pin=110001&destination_pin=400001&weight_grams=500&mode=S&payment_type=Prepaid&package_type=box` - public shipping cost lookup
+* `GET /wp-json/delhivery-wc/v1/tracking?order_id=123` - authenticated customer tracking with live scan history
+* `GET /wp-json/delhivery-wc/v1/admin/waybills?count=5` - admin waybill generation helper
+* `POST /wp-json/delhivery-wc/v1/admin/warehouse/create` - admin warehouse creation
+* `POST /wp-json/delhivery-wc/v1/admin/warehouse/update` - admin warehouse update
+* `POST /wp-json/delhivery-wc/v1/admin/manifest` - admin manifest generation
+* `GET /wp-json/delhivery-wc/v1/admin/ndr` - admin NDR list
+* `GET /wp-json/delhivery-wc/v1/admin/finance/cod` - admin COD remittance lookup
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/shipment` - create shipment for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/tracking` - sync tracking for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/label` - generate shipping label for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/pickup` - schedule pickup for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/cancel` - cancel shipment for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/update-shipment` - update shipment address details for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/reverse-pickup` - create reverse pickup for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/pod` - fetch POD details for an order
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/tracking-email` - send customer tracking email
+* `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/ndr` - submit `RE` or `RTO` action for an order
 
 == Changelog ==
 
@@ -74,7 +93,7 @@ Additional REST endpoints:
 
 * Added custom WooCommerce order statuses: "Manifested" and "Pickup Scheduled"
 * Added settings to configure order status after shipment manifest and pickup request
-* Order status automatically updates through the Delhivery lifecycle: Processing → Manifested → Pickup Scheduled → Processing (in transit) → Completed
+* Order status automatically updates through the Delhivery lifecycle: Processing -> Manifested -> Pickup Scheduled -> Processing (in transit) -> Completed
 * Hourly tracking sync now includes orders in Manifested and Pickup Scheduled statuses
 * Pickup-related Delhivery statuses now display with info-style badge in admin
 

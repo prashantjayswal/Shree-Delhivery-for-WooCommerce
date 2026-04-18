@@ -50,20 +50,30 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
             return;
         }
 
-        $destination_pin = $package['destination']['postcode'] ?? '';
-        $origin_pin = (string) $settings->get('origin_pin');
+        $destination_pin = $this->normalize_pin_code($package['destination']['postcode'] ?? '');
+        $origin_pin = $this->normalize_pin_code((string) $settings->get('origin_pin'));
 
         if (! $destination_pin || ! $origin_pin) {
             $this->log_shipping_debug('Delhivery rate calculation skipped: missing origin or destination pin.', array(
                 'origin_pin' => $origin_pin,
                 'destination_pin' => $destination_pin,
             ));
+
+            if (! $origin_pin) {
+                $settings->set_rate_notice(
+                    __('Delhivery checkout rates are unavailable because the origin pincode is missing or invalid. Update it in WooCommerce > Settings > Delhivery.', 'delhivery-woocommerce'),
+                    'error'
+                );
+            }
             return;
         }
 
         $is_cod = $this->cart_has_cod_gateway();
         $weight_grams = $this->get_package_weight_grams($package);
-        $payment_type = $is_cod ? (string) $settings->get('payment_type_cod', 'COD') : (string) $settings->get('payment_type_prepaid', 'Pre-paid');
+        $payment_type = $is_cod
+            ? (string) $settings->get('payment_type_cod', 'COD')
+            : (string) $settings->get('payment_type_prepaid', 'Prepaid');
+        $payment_type = $this->normalize_payment_type($payment_type, $is_cod);
 
         // Check serviceability once for the destination pin
         $serviceability = $client->get_serviceability($destination_pin);
@@ -72,6 +82,13 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                 'destination_pin' => $destination_pin,
                 'response' => $serviceability,
             ));
+            $settings->set_rate_notice(
+                sprintf(
+                    /* translators: %s: customer destination pincode */
+                    __('Delhivery checkout rates were skipped because destination pincode %s is not serviceable or the serviceability lookup failed. Check WooCommerce > Status > Logs > delhivery-woocommerce for details.', 'delhivery-woocommerce'),
+                    $destination_pin
+                )
+            );
             return;
         }
 
@@ -119,6 +136,7 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                         'weight_grams' => $weight_grams,
                         'mode' => $mode,
                         'package_type' => $pkg_type,
+                        'payment_type' => $payment_type,
                         'cost_response' => $cost_response,
                     ));
                     continue;
@@ -153,8 +171,17 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                 'destination_pin' => $destination_pin,
                 'origin_pin' => $origin_pin,
                 'weight_grams' => $weight_grams,
+                'payment_type' => $payment_type,
                 'attempted_combinations' => count($shipping_modes) * count($package_types),
             ));
+            $settings->set_rate_notice(
+                sprintf(
+                    /* translators: 1: destination pincode, 2: package weight in grams */
+                    __('Delhivery checkout rates returned no usable charges for pincode %1$s and package weight %2$sg. Check WooCommerce > Status > Logs > delhivery-woocommerce for the API response details.', 'delhivery-woocommerce'),
+                    $destination_pin,
+                    $weight_grams
+                )
+            );
             return;
         }
 
@@ -163,6 +190,7 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
             'destination_pin' => $destination_pin,
             'origin_pin' => $origin_pin,
         ));
+        $settings->clear_rate_notice();
 
         // Add all rates
         foreach ($rates as $rate) {
@@ -321,6 +349,26 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
         }
 
         return round((float) $clean, wc_get_price_decimals());
+    }
+
+    private function normalize_pin_code(string $pin): string
+    {
+        return preg_replace('/\D+/', '', $pin);
+    }
+
+    private function normalize_payment_type(string $payment_type, bool $is_cod): string
+    {
+        $normalized = strtolower(str_replace(array(' ', '-'), '', trim($payment_type)));
+
+        if ($is_cod) {
+            return 'cod' === $normalized ? 'COD' : 'COD';
+        }
+
+        if (in_array($normalized, array('prepaid', 'ppd'), true)) {
+            return 'Prepaid';
+        }
+
+        return 'Prepaid';
     }
 
     private function log_shipping_debug(string $message, array $context = array()): void

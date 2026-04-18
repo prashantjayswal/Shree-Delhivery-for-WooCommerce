@@ -63,7 +63,7 @@ class Delhivery_WC_Order_Manager
             return;
         }
 
-        $postcode = WC()->customer ? WC()->customer->get_shipping_postcode() : '';
+        $postcode = WC()->customer ? preg_replace('/\D+/', '', WC()->customer->get_shipping_postcode()) : '';
         if (! $postcode) {
             return;
         }

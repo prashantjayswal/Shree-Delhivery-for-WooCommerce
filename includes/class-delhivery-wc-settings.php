@@ -9,6 +9,7 @@ class Delhivery_WC_Settings
     private const OPTION_KEY = 'delhivery_wc_settings';
     private const STATUS_OPTION_KEY = 'delhivery_wc_token_status';
     private const NOTICE_TRANSIENT = 'delhivery_wc_admin_notice';
+    private const RATE_NOTICE_TRANSIENT = 'delhivery_wc_rate_notice';
     private const TAB_ID = 'delhivery';
 
     public function __construct()
@@ -142,6 +143,9 @@ class Delhivery_WC_Settings
         if (! in_array($output['shipping_mode'], array('Surface', 'Express'), true)) {
             $output['shipping_mode'] = 'Surface';
         }
+
+        $output['payment_type_prepaid'] = $this->normalize_payment_type($output['payment_type_prepaid'], false);
+        $output['payment_type_cod'] = $this->normalize_payment_type($output['payment_type_cod'], true);
 
         // Validate status_after_manifest.
         if (! in_array($output['status_after_manifest'], array('', 'processing', 'delhivery-manifest'), true)) {
@@ -319,6 +323,13 @@ class Delhivery_WC_Settings
             delete_transient(self::NOTICE_TRANSIENT);
             $class = ! empty($notice['type']) ? (string) $notice['type'] : 'info';
             echo '<div class="notice notice-' . esc_attr($class) . ' is-dismissible"><p>' . esc_html((string) $notice['message']) . '</p></div>';
+            return;
+        }
+
+        $rate_notice = get_transient(self::RATE_NOTICE_TRANSIENT);
+        if (is_array($rate_notice) && ! empty($rate_notice['message'])) {
+            $class = ! empty($rate_notice['type']) ? (string) $rate_notice['type'] : 'warning';
+            echo '<div class="notice notice-' . esc_attr($class) . ' is-dismissible"><p>' . esc_html((string) $rate_notice['message']) . '</p></div>';
             return;
         }
 
@@ -644,7 +655,7 @@ class Delhivery_WC_Settings
             'shipping_title' => 'Delhivery',
             'shipping_mode' => 'Surface',
             'transport_mode' => 'S',
-            'payment_type_prepaid' => 'Pre-paid',
+            'payment_type_prepaid' => 'Prepaid',
             'payment_type_cod' => 'COD',
             'origin_pin' => '',
             'auto_manifest' => 'no',
@@ -703,6 +714,19 @@ class Delhivery_WC_Settings
             'message' => $message,
             'type' => $type,
         ), MINUTE_IN_SECONDS * 5);
+    }
+
+    public function set_rate_notice(string $message, string $type = 'warning'): void
+    {
+        set_transient(self::RATE_NOTICE_TRANSIENT, array(
+            'message' => sanitize_text_field($message),
+            'type' => sanitize_key($type),
+        ), 15 * MINUTE_IN_SECONDS);
+    }
+
+    public function clear_rate_notice(): void
+    {
+        delete_transient(self::RATE_NOTICE_TRANSIENT);
     }
 
     private function run_connection_test(): array
@@ -930,5 +954,20 @@ class Delhivery_WC_Settings
         })();
         </script>
         <?php
+    }
+
+    private function normalize_payment_type(string $payment_type, bool $is_cod): string
+    {
+        $normalized = strtolower(str_replace(array(' ', '-'), '', trim($payment_type)));
+
+        if ($is_cod) {
+            return 'COD';
+        }
+
+        if (in_array($normalized, array('prepaid', 'ppd'), true)) {
+            return 'Prepaid';
+        }
+
+        return 'Prepaid';
     }
 }

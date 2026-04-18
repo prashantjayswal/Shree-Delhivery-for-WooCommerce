@@ -21,6 +21,7 @@ WooCommerce integration for Delhivery shipping rates, serviceability, shipment c
 - Estimated Delivery Date on Order Pages & Emails
 - Webhook Support for Real-time Status Updates
 - Tracking Info in WooCommerce Emails
+- Swagger-aligned REST operations for serviceability, EDD, shipping cost, warehouse, manifest, NDR, COD remittance, and order actions
 
 ## Requirements
 
@@ -42,6 +43,34 @@ Go to **WooCommerce > Settings > Delhivery** and add:
 - Warehouse & Return Address
 
 Use the built-in **Test Connection** button to verify your credentials.
+
+## REST API
+
+Public and customer-facing routes:
+
+- `GET /wp-json/delhivery-wc/v1/serviceability?pin=110001`
+- `GET /wp-json/delhivery-wc/v1/edd?pickup_postcode=110001&delivery_postcode=400001`
+- `GET /wp-json/delhivery-wc/v1/cost?origin_pin=110001&destination_pin=400001&weight_grams=500&mode=S&payment_type=Prepaid&package_type=box`
+- `GET /wp-json/delhivery-wc/v1/tracking?order_id=123`
+
+Admin routes for operations and business workflows:
+
+- `GET /wp-json/delhivery-wc/v1/admin/waybills?count=5`
+- `POST /wp-json/delhivery-wc/v1/admin/warehouse/create`
+- `POST /wp-json/delhivery-wc/v1/admin/warehouse/update`
+- `POST /wp-json/delhivery-wc/v1/admin/manifest`
+- `GET /wp-json/delhivery-wc/v1/admin/ndr`
+- `GET /wp-json/delhivery-wc/v1/admin/finance/cod`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/shipment`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/tracking`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/label`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/pickup`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/cancel`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/update-shipment`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/reverse-pickup`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/pod`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/tracking-email`
+- `POST /wp-json/delhivery-wc/v1/admin/orders/<order_id>/ndr` with `action=RE` or `action=RTO`
 
 ## Third-Party Service
 

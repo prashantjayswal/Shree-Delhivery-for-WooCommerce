@@ -92,7 +92,25 @@ class Delhivery_WC_Api_Client
 
     public function get_serviceability(string $pin): array
     {
-        return $this->get('c/api/pin-codes/json/', array('filter_codes' => $pin));
+        return $this->get_serviceability_details($pin);
+    }
+
+    public function get_serviceability_details(string $pin, string $pickup_postcode = '', string $cod = ''): array
+    {
+        $query = array(
+            'filter_codes' => $this->normalize_pin($pin),
+        );
+
+        $pickup_postcode = $this->normalize_pin($pickup_postcode);
+        if ('' !== $pickup_postcode) {
+            $query['pickup_postcode'] = $pickup_postcode;
+        }
+
+        if (in_array($cod, array('Y', 'N'), true)) {
+            $query['cod'] = $cod;
+        }
+
+        return $this->get('c/api/pin-codes/json/', $query);
     }
 
     public function test_connection(): array
@@ -110,8 +128,21 @@ class Delhivery_WC_Api_Client
         return $response;
     }
 
+    public function get_expected_delivery_date(string $pickup_postcode, string $delivery_postcode): array
+    {
+        return $this->get('c/api/edd/json/', array(
+            'pickup_postcode' => $this->normalize_pin($pickup_postcode),
+            'delivery_postcode' => $this->normalize_pin($delivery_postcode),
+        ));
+    }
+
     public function get_expected_tat(string $origin_pin, string $destination_pin, string $mot, string $pdt = 'B2C'): array
     {
+        $response = $this->get_expected_delivery_date($origin_pin, $destination_pin);
+        if (! empty($response['success'])) {
+            return $response;
+        }
+
         return $this->get('api/dc/expected_tat', array(
             'origin_pin' => $origin_pin,
             'destination_pin' => $destination_pin,
@@ -122,7 +153,13 @@ class Delhivery_WC_Api_Client
 
     public function get_shipping_cost(array $query): array
     {
-        return $this->get('api/kinko/v1/invoice/charges/.json', $query);
+        return $this->request_with_fallback(
+            'GET',
+            'api/kinko/v1/invoice/charges',
+            array('query' => $query),
+            'api/kinko/v1/invoice/charges/.json',
+            array('query' => $query)
+        );
     }
 
     public function fetch_waybill_single(): array
@@ -140,26 +177,44 @@ class Delhivery_WC_Api_Client
 
     public function create_shipment(array $payload): array
     {
-        return $this->post('api/cmu/create.json', array(
-            'format' => 'json',
-            'data' => wp_json_encode($payload),
-        ), array(), array('form_encoded' => true));
+        return $this->post(
+            'api/cmu/create.json',
+            $this->format_shipment_payload($payload),
+            array(),
+            array('form_encoded' => true)
+        );
     }
 
     public function track_shipment(string $waybill = '', string $reference_id = ''): array
     {
-        return $this->get('api/v1/packages/json/', array(
-            'waybill' => $waybill,
-            'ref_ids' => $reference_id,
-        ));
+        $query = array();
+        if ('' !== trim($waybill)) {
+            $query['waybill'] = trim($waybill);
+        }
+        if ('' !== trim($reference_id)) {
+            $query['ref_ids'] = trim($reference_id);
+        }
+
+        return $this->get('api/v1/packages/json/', $query);
     }
 
     public function cancel_shipment(string $waybill): array
     {
-        return $this->post('api/p/edit', array(
-            'waybill' => $waybill,
-            'cancellation' => 'true',
-        ));
+        return $this->request_with_fallback(
+            'POST',
+            'api/cmu/cancel.json',
+            array(
+                'body' => array('waybill' => trim($waybill)),
+                'form_encoded' => true,
+            ),
+            'api/p/edit',
+            array(
+                'body' => array(
+                    'waybill' => trim($waybill),
+                    'cancellation' => 'true',
+                ),
+            )
+        );
     }
 
     public function generate_label(string $waybill, string $pdf_size = '4R'): array
@@ -173,7 +228,13 @@ class Delhivery_WC_Api_Client
 
     public function create_pickup_request(array $payload): array
     {
-        return $this->post('fm/request/new/', $payload);
+        return $this->request_with_fallback(
+            'POST',
+            'api/fm/request/new/',
+            array('body' => $payload),
+            'fm/request/new/',
+            array('body' => $payload)
+        );
     }
 
     public function create_warehouse(array $payload): array
@@ -183,12 +244,27 @@ class Delhivery_WC_Api_Client
 
     public function update_warehouse(array $payload): array
     {
-        return $this->post('api/backend/clientwarehouse/edit/', $payload);
+        return $this->request_with_fallback(
+            'POST',
+            'api/backend/clientwarehouse/update/',
+            array('body' => $payload),
+            'api/backend/clientwarehouse/edit/',
+            array('body' => $payload)
+        );
     }
 
     public function update_shipment(array $payload): array
     {
-        return $this->post('api/p/edit', $payload);
+        return $this->request_with_fallback(
+            'POST',
+            'api/cmu/edit.json',
+            array(
+                'body' => $this->format_shipment_payload($payload),
+                'form_encoded' => true,
+            ),
+            'api/p/edit',
+            array('body' => $payload)
+        );
     }
 
     public function download_document(string $waybill): array
@@ -219,13 +295,40 @@ class Delhivery_WC_Api_Client
         return $this->get('api/p/info', array('waybill' => $waybill, 'verbose' => 'true'));
     }
 
+    public function get_ndr_list(array $query = array()): array
+    {
+        return $this->get('api/v1/ndr/', $query);
+    }
+
+    public function generate_manifest(array $payload = array()): array
+    {
+        return $this->post('api/p/manifest', $payload);
+    }
+
+    public function get_cod_remittance(array $query = array()): array
+    {
+        return $this->get('api/finance/cod', $query);
+    }
+
     private function build_url(string $path, array $query = array()): string
     {
         $base = $this->settings->get('sandbox') === 'yes'
             ? 'https://staging-express.delhivery.com/'
             : 'https://track.delhivery.com/';
 
-        if (0 === strpos($path, 'api/dc/') || 0 === strpos($path, 'api/cmu/') || 0 === strpos($path, 'api/v1/') || 0 === strpos($path, 'api/p/') || 0 === strpos($path, 'api/backend/') || 0 === strpos($path, 'api/kinko/') || 0 === strpos($path, 'api/reverse/') || 0 === strpos($path, 'c/api/') || 0 === strpos($path, 'waybill/api/') || 0 === strpos($path, 'fm/')) {
+        if (0 === strpos($path, 'api/dc/')
+            || 0 === strpos($path, 'api/cmu/')
+            || 0 === strpos($path, 'api/v1/')
+            || 0 === strpos($path, 'api/p/')
+            || 0 === strpos($path, 'api/backend/')
+            || 0 === strpos($path, 'api/kinko/')
+            || 0 === strpos($path, 'api/reverse/')
+            || 0 === strpos($path, 'api/fm/')
+            || 0 === strpos($path, 'api/finance/')
+            || 0 === strpos($path, 'c/api/')
+            || 0 === strpos($path, 'waybill/api/')
+            || 0 === strpos($path, 'fm/')
+        ) {
             $url = trailingslashit($base) . ltrim($path, '/');
         } else {
             $url = $path;
@@ -266,6 +369,43 @@ class Delhivery_WC_Api_Client
         }
 
         return $fallback;
+    }
+
+    private function request_with_fallback(string $method, string $path, array $args, string $fallback_path, ?array $fallback_args = null): array
+    {
+        $response = $this->request($method, $path, $args);
+
+        if (! $this->should_fallback($response)) {
+            return $response;
+        }
+
+        return $this->request($method, $fallback_path, $fallback_args ?? $args);
+    }
+
+    private function should_fallback(array $response): bool
+    {
+        if (! empty($response['success'])) {
+            return false;
+        }
+
+        return in_array((int) ($response['status_code'] ?? 0), array(0, 400, 404, 405, 415, 422), true);
+    }
+
+    private function format_shipment_payload(array $payload): array
+    {
+        if (isset($payload['format'], $payload['data'])) {
+            return $payload;
+        }
+
+        return array(
+            'format' => 'json',
+            'data' => wp_json_encode($payload),
+        );
+    }
+
+    private function normalize_pin(string $pin): string
+    {
+        return preg_replace('/\D+/', '', $pin);
     }
 
     private function log(string $message): void
