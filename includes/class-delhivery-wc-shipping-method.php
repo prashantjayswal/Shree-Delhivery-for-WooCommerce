@@ -87,22 +87,19 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
             'flyer' => 'Flyer',
         );
 
-        $cache_key_base = 'delhivery_wc_rates_' . md5($origin_pin . '_' . $destination_pin . '_' . $weight_grams . '_' . ($is_cod ? 'cod' : 'prepaid'));
-        $cached_rates = get_transient($cache_key_base);
-
-        if (is_array($cached_rates)) {
-            foreach ($cached_rates as $rate) {
-                $this->add_rate($rate);
-            }
-            return;
-        }
-
         $rates = array();
 
         // Loop through all combinations of shipping modes and package types
-        // Always calculate fresh rates if master cache doesn't exist
         foreach ($shipping_modes as $mode => $mode_label) {
             foreach ($package_types as $pkg_type => $pkg_label) {
+                $cache_key = 'delhivery_wc_rate_v2_' . md5($origin_pin . '_' . $destination_pin . '_' . $weight_grams . '_' . ($is_cod ? 'cod' : 'prepaid') . '_' . $mode . '_' . $pkg_type);
+                $cached = get_transient($cache_key);
+
+                if (is_array($cached)) {
+                    $rates[] = $cached;
+                    continue;
+                }
+
                 $cost_response = $client->get_shipping_cost(array(
                     'md' => $mode,
                     'ss' => 'Delivered',
@@ -136,6 +133,8 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                 }
 
                 $rate = array(
+                    'id' => $this->id . '_' . strtolower($mode) . '_' . strtolower($pkg_type),
+                    'method_id' => $this->id,
                     'label' => $label,
                     'cost'  => $rate_cost,
                     'meta_data' => array(
@@ -145,9 +144,6 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
                 );
 
                 $rates[] = $rate;
-
-                // Cache individual rate
-                $cache_key = $cache_key_base . '_' . $mode . '_' . $pkg_type;
                 set_transient($cache_key, $rate, 30 * MINUTE_IN_SECONDS);
             }
         }
@@ -167,9 +163,6 @@ class Delhivery_WC_Shipping_Method extends WC_Shipping_Method
             'destination_pin' => $destination_pin,
             'origin_pin' => $origin_pin,
         ));
-
-        // Cache all rates together
-        set_transient($cache_key_base, $rates, 30 * MINUTE_IN_SECONDS);
 
         // Add all rates
         foreach ($rates as $rate) {
